@@ -25,8 +25,8 @@ OfflineCase_Report = class {
       SaveUserVariant: {
         transform: this.PreSaveUserVariant,
       },
-      DeleteVariant: {
-        transform: this.PreDeleteVariant,
+      CustomizeColumns: {
+        transform: this.PreCustomizeColumns,
       },
     };
   }
@@ -118,9 +118,6 @@ OfflineCase_Report = class {
   }
 
   static PostCustomizeColumns(primaryPage) {
-    console.log("in postcustomize-----------------");
-    console.log(OfflineUtil.getPropertyValue("ModalPrimary", "AvailableFields"));
-    console.log(OfflineUtil.getPropertyValue("ModalPrimary", "VisibleFields"));
     /* #region 1. Set .AvailableFields equal to ModalPrimary.AvailableFields */
     OfflineUtil.setPropertyValue(primaryPage, "AvailableFields", OfflineUtil.getPropertyValue("ModalPrimary", "AvailableFields"));
     /* #endregion 1 */
@@ -239,7 +236,6 @@ OfflineCase_Report = class {
           Primary.UserFilters[newLength - 1].Advanced = "true";
 
           OfflineEmbed_ReportFilter.SetRelativeValue(primaryPage + ".UserFilters(" + newLength + ")", Param);
-          OfflineEmbed_ReportFilter.SetValueLabel(primaryPage + ".UserFilters(" + newLength + ")");
 
           Primary.UserFilters[newLength - 1].Value = `'` + Primary.UserFilters[newLength - 1].Value + `'`;
         }
@@ -248,6 +244,8 @@ OfflineCase_Report = class {
         /* #region 2.5.4 Apply-DataTransform (Lookup compare operator) */
         OfflineEmbed_ReportFilter.SetComparisonType(`${primaryPage}.UserFilters(${newLength})`);
         /* #endregion 2.5.4 */
+
+        OfflineEmbed_ReportFilter.SetValueLabel(primaryPage + ".UserFilters(" + newLength + ")");
 
         /* #region 2.5.5 Page-Change-Class */
         //In offline version, this is handled in previous step.
@@ -260,18 +258,19 @@ OfflineCase_Report = class {
       /* #endregion 2.5 */
 
       /* #region 2.6. Loop D_VariantColumnList[ReportClass:.pxObjClass,VariantName:local.variantName,Owner:local.variantOwner].pxResults (loop through the variant fields...) */
-      let columns = await OfflineUtil.runQuery("Select * from D_VariantColumnList where ReportClass = ? and variantName = ? and owner = ?", [OfflineUtil.getPropertyValue(primaryPage, "pxObjClass"), variantName, "ALL"]);
+      let columns = await OfflineUtil.runQuery("Select * from D_VariantColumnList where ReportClass = ? and variantName = ? and owner = ?", [OfflineUtil.getPropertyValue(primaryPage, "pxObjClass"), variantName, variantOwner]);
       let newVisibleFields = [];
       columns.forEach((column) => {
         /* #region 2.6.1. Property-Set (find the matching field and abort if not found) */
-        let fieldIndex = OfflineUtil.getPropertyValue(primaryPage, "AvailableFields").findIndex((field) => field.DatabasePath == column.Column);
+        let fieldIndex = OfflineUtil.getPropertyValue(primaryPage, "AvailableFields").findIndex((field) => field.Label == column.Column);
         // Transition
+        console.log(fieldIndex);
         if (fieldIndex < 0) return;
         /* #endregion 2.6.1 */
 
         /* #region 2.6.2. Property-Set (move the matching field to visible) */
         newVisibleFields.push(availableFields.splice(fieldIndex, 1)[0]);
-        OfflineUtil.setPropertyValue(primaryPage, "VisibleFields", newVisibleFields);
+        OfflineUtil.setPropertyValue(primaryPage, "AvailableFields", availableFields);
         /* #endregion 2.6.2 */
 
         /* #region 2.6.3. Property-Remove (remove the matching field from available) */
@@ -285,6 +284,7 @@ OfflineCase_Report = class {
       /* #endregion 2.6 */
 
       /* #region 2.7. Property-Set (if no fields, restore the remembered fields) */
+      console.log(newVisibleFields);
       if (newVisibleFields[0]) {
         OfflineUtil.setPropertyValue(primaryPage, "AvailableFields", availableFields);
         OfflineUtil.setPropertyValue(primaryPage, "VisibleFields", newVisibleFields);
@@ -602,8 +602,6 @@ OfflineCase_Report = class {
     let query = selectClause + selectTerms + " FROM " + OfflineUtil.getPropertyValue(primaryPage, "QuerySource") + whereClause + (OfflineUtil.getPropertyValue(primaryPage, "GroupBy") || "") + orderByTerms + " LIMIT " + (limit + 1) + " OFFSET " + offset;
     /* #endregion 17 */
 
-    console.log(query);
-
     /* #region 18. RDB-List (Run query) */
     let results = await OfflineUtil.runQuery(query, []);
     /* #endregion 18 */
@@ -652,29 +650,26 @@ OfflineCase_Report = class {
     Primary.SetAsDefault = "false";
   }
 
-  static async PreDeleteVariant(primaryPage, parameters = {}) {
-    let Primary = new ClipboardPage(primaryPage);
-    Primary.SelectedVariantName = Primary.LastAppliedVariant;
-  }
-
   static async PostDeleteVariant(primaryPage, parameters = {}) {
     let Primary = new ClipboardPage(primaryPage);
-    let owner = OfflineUtil.whatComesAfterFirst(Primary.LastAppliedVariant, "!");
-    let name = OfflineUtil.whatComesBeforeFirst(Primary.LastAppliedVariant, "!");
+    console.log(Primary.SelectedVariantName);
+    let owner = OfflineUtil.whatComesAfterFirst(Primary.SelectedVariantName, "!");
+    let name = OfflineUtil.whatComesBeforeFirst(Primary.SelectedVariantName, "!");
     let setting = "DefaultView-" + Primary.pxObjClass;
     //delete variant
     await OfflineUtil.runQuery("delete from D_VariantList where name = ? and owner = ?", [name, owner]);
     //delete columns
     await OfflineUtil.runQuery("delete from D_VariantFilterList where variantname = ? and owner = ?", [name, owner]);
     //delete filters
-    await OfflineUtil.runQuery("delete from D_VariantColumnList where name = ? and owner = ?", [name, owner]);
+    await OfflineUtil.runQuery("delete from D_VariantColumnList where variantname = ? and owner = ?", [name, owner]);
     //delete setting
-    await OfflineUtil.runQuery("delete from D_UserSettingList where name = ? and personnumber = ? and value = ?", [setting, owner, Primary.LastAppliedVariant]);
-    //call the quieue function and pass a page which has LastAppliedVariant and pxObjClass
-    launchbox.PRPC.ClientStore.addAction("", "", '{"action":"callActivity","className":"GCSS-DiscOps-Work-Report","activityName":"PostDeleteVariant"}', `{"pxObjClass":"${Primary.pxObjClass}","LastAppliedVariant":"${Primary.LastAppliedVariant}"}`);
+    await OfflineUtil.runQuery("delete from D_UserSettingList where name = ? and personnumber = ? and value = ?", [setting, owner, Primary.SelectedVariantName]);
+    //call the quieue function and pass a page which has LastAppliedVariant and pxObjClass -- FIX THIS!!
+    //launchbox.PRPC.ClientStore.addAction("", "", '{"action":"callActivity","className":"GCSS-DiscOps-Work-Report","activityName":"PostDeleteVariant"}', `{"pxObjClass":"${Primary.pxObjClass}","LastAppliedVariant":"${Primary.LastAppliedVariant}"}`);
     //clear variant
     Primary.SelectedVariantName = "";
-    Primary.LastAppliedVariant = "";
+    Primary.AppliedFilter = "";
+    await OfflineCase_Report.InitializeVariantLists(primaryPage);
   }
 
   static async PostSaveUserVariant(primaryPage, parameters = {}) {
@@ -714,8 +709,8 @@ OfflineCase_Report = class {
     //page = JSON.stringify(page);
     //launchbox.PRPC.ClientStore.addAction("", "", '{"action":"callActivity","className":"GCSS-DiscOps-Work-Report","activityName":"PostSaveUserVariant"}', page);
     //set selected variant
-    Primary.LastAppliedVariant = Primary.SelectedVariantName + "!" + D_AuthProfile.Person.PersonNumber;
-    Primary.SelectedVariantName = Primary.LastAppliedVariant;
+    Primary.SelectedVariantName = Primary.SaveAsName + "!" + D_AuthProfile.Person.PersonNumber;
+    Primary.AppliedFilter = Primary.SaveAsName;
     //set default if applicable
     if (Primary.SetAsDefault == true || Primary.SetAsDefault == "true") {
       await OfflineCase_Report.PostSetDefaultVariant(primaryPage);
@@ -729,7 +724,7 @@ OfflineCase_Report = class {
 
     await OfflineUtil.runQuery("insert or replace into D_UserSettingList (softflag, Name, PersonNumber, Value) VALUES (0,?,?,?)", ["DefaultView-" + Primary.pxObjClass, D_AuthProfile.Person.PersonNumber, Primary.SelectedVariantName]);
 
-    launchbox.PRPC.ClientStore.addAction("", "", '{"action":"callActivity","className":"GCSS-DiscOps-Work-Report","activityName":"PostSetDefaultVariant"}', `{"PersonNumber":"${D_AuthProfile.Person.PersonNumber}","pxObjClass":"${Primary.pxObjClass}","SelectedVariantName":"${Primary.SelectedVariantName}"}`);
+    //launchbox.PRPC.ClientStore.addAction("", "", '{"action":"callActivity","className":"GCSS-DiscOps-Work-Report","activityName":"PostSetDefaultVariant"}', `{"PersonNumber":"${D_AuthProfile.Person.PersonNumber}","pxObjClass":"${Primary.pxObjClass}","SelectedVariantName":"${Primary.SelectedVariantName}"}`);
   }
 
   /* #endregion Data Transforms */
@@ -881,7 +876,7 @@ OfflineCase_Report = class {
       generateandrunquery: this.GenerateAndRunQuery,
       applyselectedvariant: this.ApplySelectedVariant,
       previewreport: this.PreViewReport,
-      predeletevariant: this.PreDeleteVariant,
+
       presaveuservariant: this.PreSaveUserVariant,
       postdeletevariant: this.PostDeleteVariant,
       postsaveuservariant: this.PostSaveUserVariant,
@@ -941,7 +936,7 @@ OfflineCase_Report = class {
     var menuid = Date.now();
     var actionMenu = new OfflineUtil.navigation(menuid);
 
-    actionMenu.addMenuItem("Hide / Reorder columns...", [`$('.CustomizeAction > span > a')[0].click()`]);
+    actionMenu.addMenuItem("Hide / Reorder columns...", [`HarnessUtil.localActionPre("${Primary.pxObjClass}","CustomizeColumns",event)`, `$('.CustomizeAction > span > a')[0].click()`]);
     actionMenu.addSubMenu("Apply view", (child) => {
       let userVariants = OfflineUtil.getPropertyValue(contextPage, "VariantsForUser") || [];
       let systemVariants = OfflineUtil.getPropertyValue(contextPage, "VariantsForAll") || [];
@@ -2244,7 +2239,7 @@ OfflineUtilType = class extends HarnessUtilType {
     let classInstance = ClassLookups[className];
     if (classInstance) {
       if (classInstance.preProcessing && classInstance.preProcessing[flowAction] && classInstance.preProcessing[flowAction].transform) {
-        //pega.datatransform[modifiedClassName + "_pre" + modifiedFlowActionName] = classInstance.preProcessing[flowAction].transform;
+        pega.datatransform[modifiedClassName + "_pre" + modifiedFlowActionName] = classInstance.preProcessing[flowAction].transform;
       }
       if (classInstance.postProcessing && classInstance.postProcessing[flowAction] && classInstance.postProcessing[flowAction].transform) {
         //pega.datatransform[modifiedClassName + "_post" + modifiedFlowActionName] = classInstance.postProcessing[flowAction].transform;
@@ -2253,8 +2248,7 @@ OfflineUtilType = class extends HarnessUtilType {
     if (pega.datatransform[modifiedClassName + "_pre" + modifiedFlowActionName]) {
       pega.datatransform[modifiedClassName + "_pre" + modifiedFlowActionName](targetPage);
     }
-    console.log(classInstance);
-    console.log(flowAction);
+
     this.actionSubmitted = false;
     doModalAction = async (a, b) => {
       if (a && a.taskStatus && a.taskStatus != "") {
@@ -3239,6 +3233,463 @@ OfflineUtilType = class extends HarnessUtilType {
     }
   }
 };
+
+OfflineEmbed_ReportFilter = class {
+  static SetComparisonType(primaryPage) {
+    let dataType = OfflineUtil.getPropertyValue(`${primaryPage}.Field`, "DataType");
+    let comparison = OfflineUtil.getPropertyValue(primaryPage, "Comparison");
+
+    /* #region 1 When .Field.DataType == "Text" */
+    if (dataType == "Text") {
+      /* #region 1.1 When .Comparison == "equals" */
+      if (comparison == "equals") {
+        /* #region 1.1.1 Set .CompareOperator to "= '{1}'~ OR LOWER({0}) = '{2}'~" */
+        OfflineUtil.setPropertyValue(primaryPage, "CompareOperator", "= '{1}'~ OR LOWER({0}) = '{2}'~");
+        /* #endregion 1.1.1 */
+      }
+      /* #endregion 1.1 */
+
+      /* #region 1.2 When .Comparison == "does not equal" */
+      if (comparison == "does not equal") {
+        /* #region 1.2.1 Set .CompareOperator to "<> '{1}'~ AND LOWER({0}) <> '{2}'~" */
+        OfflineUtil.setPropertyValue(primaryPage, "CompareOperator", "<> '{1}'~ AND LOWER({0}) <> '{2}'~");
+        /* #endregion 1.2.1 */
+      }
+      /* #endregion 1.2 */
+
+      /* #region 1.3 When .Comparison == "is greater than" */
+      if (comparison == "is greater than") {
+        /* #region 1.3.1 Set .CompareOperator to "> '{1}'" */
+        OfflineUtil.setPropertyValue(primaryPage, "CompareOperator", "> '{1}'");
+        /* #endregion 1.3.1 */
+      }
+      /* #endregion 1.3 */
+
+      /* #region 1.4 When .Comparison == "is greater than or equal to" */
+      if (comparison == "is greater than or equal to") {
+        /* #region 1.4.1 Set .CompareOperator to ">= '{1}'" */
+        OfflineUtil.setPropertyValue(primaryPage, "CompareOperator", ">= '{1}'");
+        /* #endregion 1.4.1 */
+      }
+      /* #endregion 1.4 */
+
+      /* #region 1.5 When .Comparison == "is less than" */
+      if (comparison == "is less than") {
+        /* #region 1.5.1 Set .CompareOperator to "< '{1}'" */
+        OfflineUtil.setPropertyValue(primaryPage, "CompareOperator", "< '{1}'");
+        /* #endregion 1.5.1 */
+      }
+      /* #endregion 1.5 */
+
+      /* #region 1.6 When .Comparison == "is less than or equal to" */
+      if (comparison == "is less than or equal to") {
+        /* #region 1.6.1 Set .CompareOperator to "<= '{1}'" */
+        OfflineUtil.setPropertyValue(primaryPage, "CompareOperator", "<= '{1}'");
+        /* #endregion 1.6.1 */
+      }
+      /* #endregion 1.6 */
+
+      /* #region 1.7 When .Comparison == "contains" */
+      if (comparison == "contains") {
+        /* #region 1.7.1 Set .CompareOperator to "LIKE '%{1}%'~ OR LOWER({0}) LIKE '%{2}%'~" */
+        OfflineUtil.setPropertyValue(primaryPage, "CompareOperator", "LIKE '%{1}%'~ OR LOWER({0}) LIKE '%{2}%'~");
+        /* #endregion 1.7.1 */
+      }
+      /* #endregion 1.7 */
+
+      /* #region 1.8 When .Comparison == "does not contain" */
+      if (comparison == "does not contain") {
+        /* #region 1.8.1 Set .CompareOperator to "NOT LIKE '%{1}%'~ AND LOWER({0}) NOT LIKE '%{2}%'~" */
+        OfflineUtil.setPropertyValue(primaryPage, "CompareOperator", "NOT LIKE '%{1}%'~ AND LOWER({0}) NOT LIKE '%{2}%'~");
+        /* #endregion 1.8.1 */
+      }
+      /* #endregion 1.8 */
+
+      /* #region 1.9 When .Comparison == "starts with" */
+      if (comparison == "starts with") {
+        /* #region 1.9.1 Set .CompareOperator to "LIKE '{1}%'~ OR LOWER({0}) LIKE '{2}%'~" */
+        OfflineUtil.setPropertyValue(primaryPage, "CompareOperator", "LIKE '{1}%'~ OR LOWER({0}) LIKE '{2}%'~");
+        /* #endregion 1.9.1 */
+      }
+      /* #endregion 1.9 */
+
+      /* #region 1.10 When .Comparison == "does not start with" */
+      if (comparison == "does not start with") {
+        /* #region 1.10.1 Set .CompareOperator to "NOT LIKE '{1}%'~ AND LOWER({0}) NOT LIKE '{2}%'~" */
+        OfflineUtil.setPropertyValue(primaryPage, "CompareOperator", "NOT LIKE '{1}%'~ AND LOWER({0}) NOT LIKE '{2}%'~");
+        /* #endregion 1.10.1 */
+      }
+      /* #endregion 1.10 */
+
+      /* #region 1.11 When .Comparison == "ends with" */
+      if (comparison == "ends with") {
+        /* #region 1.11.1 Set .CompareOperator to "LIKE '%{1}'~ OR LOWER({0}) LIKE '%{2}'~" */
+        OfflineUtil.setPropertyValue(primaryPage, "CompareOperator", "LIKE '%{1}'~ OR LOWER({0}) LIKE '%{2}'~");
+        /* #endregion 1.11.1 */
+      }
+      /* #endregion 1.11 */
+
+      /* #region 1.12 When .Comparison == "does not end with" */
+      if (comparison == "does not end with") {
+        /* #region 1.12.1 Set .CompareOperator to "NOT LIKE '%{1}'~ AND LOWER({0}) NOT LIKE '%{2}'~" */
+        OfflineUtil.setPropertyValue(primaryPage, "CompareOperator", "NOT LIKE '%{1}'~ AND LOWER({0}) NOT LIKE '%{2}'~");
+        /* #endregion 1.12.1 */
+      }
+      /* #endregion 1.12 */
+
+      /* #region 1.13 When .Comparison == "is blank" */
+      if (comparison == "is blank") {
+        /* #region 1.13.1 Set .CompareOperator to "IS NULL" */
+        OfflineUtil.setPropertyValue(primaryPage, "CompareOperator", "IS NULL OR {0} = ''");
+        /* #endregion 1.13.1 */
+      }
+      /* #endregion 1.13 */
+
+      /* #region 1.14 When .Comparison == "is not blank" */
+      if (comparison == "is not blank") {
+        /* #region 1.14.1 Set .CompareOperator to "IS NOT NULL" */
+        OfflineUtil.setPropertyValue(primaryPage, "CompareOperator", "IS NOT NULL AND {0} <> ''");
+        /* #endregion 1.14.1 */
+      }
+      /* #endregion 1.14 */
+
+      /* #endregion 1 */
+      /* #region 2 Otherwise When .Field.DataType == "DateTime" */
+    } else if (dataType == "DateTime") {
+      /* #region 2.1 When .Comparison == "is greater than" */
+      if (comparison == "is greater than") {
+        /* #region 2.1.1 Set .CompareOperator to "> {1}" */
+        //Offline handles datetimes as formatted strings
+        OfflineUtil.setPropertyValue(primaryPage, "CompareOperator", "> '{1}'");
+        /* #endregion 2.1.1 */
+      }
+      /* #endregion 2.1 */
+
+      /* #region 2.2 When .Comparison == "is greater than or equal to" */
+      if (comparison == "is greater than or equal to") {
+        /* #region 2.2.1 Set .CompareOperator to ">= {1}" */
+        //Offline handles datetimes as formatted strings
+        OfflineUtil.setPropertyValue(primaryPage, "CompareOperator", ">= '{1}'");
+        /* #endregion 2.2.1 */
+      }
+      /* #endregion 2.2 */
+
+      /* #region 2.3 When .Comparison == "is less than" */
+      if (comparison == "is less than") {
+        /* #region 2.3.1 Set .CompareOperator to "< {1}" */
+        //Offline handles datetimes as formatted strings
+        OfflineUtil.setPropertyValue(primaryPage, "CompareOperator", "< '{1}'");
+        /* #endregion 2.3.1 */
+      }
+      /* #endregion 2.3 */
+
+      /* #region 2.4 When .Comparison == "is less than or equal to" */
+      if (comparison == "is less than or equal to") {
+        /* #region 2.4.1 Set .CompareOperator to "<= {1}" */
+        //Offline handles datetimes as formatted strings
+        OfflineUtil.setPropertyValue(primaryPage, "CompareOperator", "<= '{1}'");
+        /* #endregion 2.4.1 */
+      }
+      /* #endregion 2.4 */
+
+      /* #region 2.5 When .Comparison == "is blank" */
+      if (comparison == "is blank") {
+        /* #region 2.5.1 Set .CompareOperator to "IS NULL" */
+        OfflineUtil.setPropertyValue(primaryPage, "CompareOperator", "IS NULL");
+        /* #endregion 2.5.1 */
+      }
+      /* #endregion 2.5 */
+
+      /* #region 2.6 When .Comparison == "is not blank" */
+      if (comparison == "is not blank") {
+        /* #region 2.6.1 Set .CompareOperator to "IS NOT NULL" */
+        OfflineUtil.setPropertyValue(primaryPage, "CompareOperator", "IS NOT NULL");
+        /* #endregion 2.6.1 */
+      }
+      /* #endregion 2.6 */
+
+      /* #endregion 2 */
+      /* #region 3 Otherwise */
+    } else {
+      /* #region 3.1 When .Comparison == "equals" */
+      if (comparison == "equals") {
+        /* #region 3.1.1 Set .CompareOperator to "= {1}~ OR {0} = {2}~" */
+        OfflineUtil.setPropertyValue(primaryPage, "CompareOperator", "= {1}~ OR {0} = {2}~");
+        /* #endregion 3.1.1 */
+      }
+      /* #endregion 3.1 */
+
+      /* #region 3.2 When .Comparison == "does not equal" */
+      if (comparison == "does not equal") {
+        /* #region 3.2.1 Set .CompareOperator to "<> {1}~ AND {0} <> {2}~" */
+        OfflineUtil.setPropertyValue(primaryPage, "CompareOperator", "<> {1}~ AND {0} <> {2}~");
+        /* #endregion 3.2.1 */
+      }
+      /* #endregion 3.2 */
+
+      /* #region 3.3 When .Comparison == "is greater than" */
+      if (comparison == "is greater than") {
+        /* #region 3.3.1 Set .CompareOperator to "> {1}" */
+        OfflineUtil.setPropertyValue(primaryPage, "CompareOperator", "> {1}");
+        /* #endregion 3.3.1 */
+      }
+      /* #endregion 3.3 */
+
+      /* #region 3.4 When .Comparison == "is greater than or equal to" */
+      if (comparison == "is greater than or equal to") {
+        /* #region 3.4.1 Set .CompareOperator to ">= {1}" */
+        OfflineUtil.setPropertyValue(primaryPage, "CompareOperator", ">= {1}");
+        /* #endregion 3.4.1 */
+      }
+      /* #endregion 3.4 */
+
+      /* #region 3.5 When .Comparison == "is less than" */
+      if (comparison == "is less than") {
+        /* #region 3.5.1 Set .CompareOperator to "< {1}" */
+        OfflineUtil.setPropertyValue(primaryPage, "CompareOperator", "< {1}");
+        /* #endregion 3.5.1 */
+      }
+      /* #endregion 3.5 */
+
+      /* #region 3.6 When .Comparison == "is less than or equal to" */
+      if (comparison == "is less than or equal to") {
+        /* #region 3.6.1 Set .CompareOperator to "<= {1}" */
+        OfflineUtil.setPropertyValue(primaryPage, "CompareOperator", "<= {1}");
+        /* #endregion 3.6.1 */
+      }
+      /* #endregion 3.6 */
+
+      /* #region 3.7 When .Comparison == "is blank" */
+      if (comparison == "is blank") {
+        /* #region 3.7.1 Set .CompareOperator to "IS NULL" */
+        OfflineUtil.setPropertyValue(primaryPage, "CompareOperator", "IS NULL");
+        /* #endregion 3.7.1 */
+      }
+      /* #endregion 3.7 */
+
+      /* #region 3.8 When .Comparison == "is not blank" */
+      if (comparison == "is not blank") {
+        /* #region 3.8.1 Set .CompareOperator to "IS NOT NULL" */
+        OfflineUtil.setPropertyValue(primaryPage, "CompareOperator", "IS NOT NULL");
+        /* #endregion 3.8.1 */
+      }
+      /* #endregion 3.8 */
+
+      /* #region 3.9 When .Comparison == "is true" */
+      //Offline we select booleans as strings (otherwise CfW stupidly converts them to numbers)
+      if (comparison == "is true") {
+        /* #region 3.9.1 Set .CompareOperator to "= TRUE" */
+        OfflineUtil.setPropertyValue(primaryPage, "CompareOperator", "= 'TRUE'");
+        /* #endregion 3.9.1 */
+      }
+      /* #endregion 3.9 */
+
+      /* #region 3.10 When .Comparison == "is false" */
+      if (comparison == "is false") {
+        /* #region 3.10.1 Set .CompareOperator to "= FALSE" */
+        OfflineUtil.setPropertyValue(primaryPage, "CompareOperator", "= 'FALSE'");
+        /* #endregion 3.10.1 */
+      }
+      /* #endregion 3.10 */
+    }
+    /* #endregion 3 */
+  }
+
+  static SetValueLabel(primaryPage) {
+    let Primary = new ClipboardPage(primaryPage);
+
+    if (Primary.Comparison == "is blank" || Primary.Comparison == "is not blank") {
+      Primary.ValueLabel = "";
+    } else {
+      Primary.ValueLabel = Primary.Value;
+      let TrimValue = Primary.Value.replace(/'/g, "");
+      if (Primary.Field.DataType == "Date") {
+        let valueDate = TrimValue;
+        OfflineUtil.setPropertyValue(primaryPage, "ValueLabel", valueDate.substring(4, 6));
+        OfflineUtil.setPropertyValue(primaryPage, "ValueLabel", OfflineUtil.getPropertyValue(primaryPage, "ValueLabel") + "/" + valueDate.substring(6, 8));
+        OfflineUtil.setPropertyValue(primaryPage, "ValueLabel", OfflineUtil.getPropertyValue(primaryPage, "ValueLabel") + "/" + valueDate.substring(0, 4));
+      } else if (Primary.Field.DataType == "DateTime") {
+        let valueDateTime = TrimValue;
+        OfflineUtil.setPropertyValue(primaryPage, "ValueLabel", valueDateTime.substring(4, 6));
+        OfflineUtil.setPropertyValue(primaryPage, "ValueLabel", OfflineUtil.getPropertyValue(primaryPage, "ValueLabel") + "/" + valueDateTime.substring(6, 8));
+        OfflineUtil.setPropertyValue(primaryPage, "ValueLabel", OfflineUtil.getPropertyValue(primaryPage, "ValueLabel") + "/" + valueDateTime.substring(0, 4));
+        OfflineUtil.setPropertyValue(primaryPage, "ValueLabel", OfflineUtil.getPropertyValue(primaryPage, "ValueLabel") + " " + valueDateTime.substring(9, 11));
+        OfflineUtil.setPropertyValue(primaryPage, "ValueLabel", OfflineUtil.getPropertyValue(primaryPage, "ValueLabel") + ":" + valueDateTime.substring(11, 13));
+        OfflineUtil.setPropertyValue(primaryPage, "ValueLabel", OfflineUtil.getPropertyValue(primaryPage, "ValueLabel") + ":" + valueDateTime.substring(13, 15));
+      }
+    }
+  }
+
+  static SetRelativeValue(primaryPage, Param = {}) {
+    let Primary = new ClipboardPage(primaryPage);
+    if (Primary.RelativeDate == "TODAY") {
+      Primary.Value = OfflineUtil.today(Primary.DaysOffset, false);
+    } else if (Primary.RelativeDate == "START-WEEK") {
+      Primary.Value = new Date(new Date().setDate(new Date().getDate() - new Date().getDay() + parseInt(Primary.DaysOffset))).toISOString().slice(0, 10).replace(/-/g, "");
+    } else if (Primary.RelativeDate == "END-WEEK") {
+      Primary.Value = new Date(new Date().setDate(new Date().getDate() - new Date().getDay() + parseInt(Primary.DaysOffset) + 6)).toISOString().slice(0, 10).replace(/-/g, "");
+    } else if (Primary.RelativeDate == "START-MONTH") {
+      const firstDayOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+      const numberOfDays = parseInt(Primary.DaysOffset);
+      const resultDate = new Date(firstDayOfMonth);
+      resultDate.setDate(resultDate.getDate() + numberOfDays);
+      const formattedDate = resultDate.toISOString().slice(0, 10).replace(/-/g, "");
+      Primary.Value = formattedDate;
+    } else if (Primary.RelativeDate == "END-MONTH") {
+      const currentDate = new Date();
+      const lastDayOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
+      const numberOfDays = parseInt(Primary.DaysOffset);
+      const resultDate = new Date(lastDayOfMonth);
+      resultDate.setDate(resultDate.getDate() + numberOfDays);
+      const formattedDate = resultDate.toISOString().slice(0, 10).replace(/-/g, "");
+      Primary.Value = formattedDate;
+    } else if (Primary.RelativeDate == "START-YEAR") {
+      const currentDate = new Date();
+      const firstDayOfYear = new Date(currentDate.getFullYear(), 0, 1);
+      const numberOfDays = parseInt(Primary.DaysOffset);
+      const resultDate = new Date(firstDayOfYear);
+      resultDate.setDate(resultDate.getDate() + numberOfDays);
+      const formattedDate = resultDate.toISOString().slice(0, 10).replace(/-/g, "");
+      Primary.Value = formattedDate;
+    } else if (Primary.RelativeDate == "END-YEAR") {
+      const currentDate = new Date();
+      const lastDayOfYear = new Date(currentDate.getFullYear() + 1, 0, 0);
+      const numberOfDays = parseInt(Primary.DaysOffset);
+      const resultDate = new Date(lastDayOfYear);
+      resultDate.setDate(resultDate.getDate() + numberOfDays);
+      const formattedDate = resultDate.toISOString().slice(0, 10).replace(/-/g, "");
+      Primary.Value = formattedDate;
+    }
+    if (Param.DataType == "DateTime") {
+      if (Primary.RelativeDate == "NOW") {
+        Primary.Value = OfflineUtil.today(0, true);
+      } else {
+        Primary.Value = Primary.Value + "T" + Primary.RelativeTime + ".000 GMT";
+      }
+    }
+  }
+
+  static PostEditFilter(primaryPage, Param = {}) {
+    let Primary = new ClipboardPage(primaryPage);
+    let ModalPrimary = new ClipboardPage("ModalPrimary");
+
+    Primary.AdditionalFiltersCount = ModalPrimary.AdditionalFiltersCount;
+    Primary.AdditionalValues = ModalPrimary.AdditionalValues;
+    Primary.Advanced = ModalPrimary.Advanced;
+    Primary.CompareOperator = ModalPrimary.CompareOperator;
+    Primary.Comparison = ModalPrimary.Comparison;
+    Primary.DaysOffset = ModalPrimary.DaysOffset;
+    Primary.Field = ModalPrimary.Field;
+    Primary.Order = ModalPrimary.Order;
+    Primary.RelativeDate = ModalPrimary.RelativeDate;
+    Primary.RelativeTime = ModalPrimary.RelativeTime;
+    Primary.Value = ModalPrimary.Value;
+    Primary.ValueLabel = ModalPrimary.ValueLabel;
+    Primary.ValueNumber = ModalPrimary.ValueNumber;
+    Primary.ValueDate = ModalPrimary.ValueDate;
+    Primary.ValueDateTime = ModalPrimary.ValueDateTime;
+  }
+
+  static PostEditFilterBoolean(primaryPage) {
+    OfflineEmbed_ReportField.PostAddFilterBoolean(primaryPage + ".Field");
+    OfflineEmbed_ReportFilter.PostEditFilter(primaryPage);
+  }
+
+  static PostEditFilterDate(primaryPage) {
+    OfflineEmbed_ReportField.PostAddFilterDate(primaryPage + ".Field");
+    OfflineEmbed_ReportFilter.PostEditFilter(primaryPage);
+  }
+
+  static PostEditFilterDateTime(primaryPage) {
+    OfflineEmbed_ReportField.PostAddFilterDateTime(primaryPage + ".Field");
+    OfflineEmbed_ReportFilter.PostEditFilter(primaryPage);
+  }
+
+  static PostEditFilterNumber(primaryPage) {
+    OfflineEmbed_ReportField.PostAddFilterNumber(primaryPage + ".Field");
+    OfflineEmbed_ReportFilter.PostEditFilter(primaryPage);
+  }
+
+  static PostEditFilterText(primaryPage) {
+    OfflineEmbed_ReportField.PostAddFilterText(primaryPage + ".Field");
+    OfflineEmbed_ReportFilter.PostEditFilter(primaryPage);
+  }
+
+  static PreEditFilter(primaryPage) {
+    let Primary = new ClipboardPage(primaryPage);
+    let ModalPrimary = new ClipboardPage("ModalPrimary");
+
+    ModalPrimary.AdditionalFiltersCount = Primary.AdditionalFiltersCount;
+    ModalPrimary.AdditionalValues = Primary.AdditionalValues;
+    ModalPrimary.Advanced = Primary.Advanced;
+    ModalPrimary.CompareOperator = Primary.CompareOperator;
+    ModalPrimary.Comparison = Primary.Comparison;
+    ModalPrimary.DaysOffset = Primary.DaysOffset;
+    ModalPrimary.Field = Primary.Field;
+    ModalPrimary.Order = Primary.Order;
+    ModalPrimary.RelativeDate = Primary.RelativeDate;
+    ModalPrimary.RelativeTime = Primary.RelativeTime;
+    ModalPrimary.Value = Primary.Value;
+    ModalPrimary.ValueLabel = Primary.ValueLabel;
+    ModalPrimary.ValueNumber = Primary.ValueNumber;
+    ModalPrimary.ValueDate = Primary.ValueDate;
+    ModalPrimary.ValueDateTime = Primary.ValueDateTime;
+    OfflineEmbed_ReportFilter.SetRelativeValue("ModalPrimary");
+  }
+
+  static PreEditFilterBoolean(primaryPage) {
+    OfflineUtil.removePage("ModalPrimary");
+    OfflineUtil.setPropertyValue("ModalPrimary", "Value", "");
+    OfflineEmbed_ReportFilter.PreEditFilter(primaryPage);
+  }
+
+  static PreEditFilterDate(primaryPage) {
+    OfflineUtil.removePage("ModalPrimary");
+    OfflineUtil.setPropertyValue("ModalPrimary", "Value", "");
+    OfflineEmbed_ReportFilter.PreEditFilter(primaryPage);
+  }
+
+  static PreEditFilterDateTime(primaryPage) {
+    OfflineUtil.removePage("ModalPrimary");
+    OfflineUtil.setPropertyValue("ModalPrimary", "Value", "");
+    OfflineEmbed_ReportFilter.PreEditFilter(primaryPage);
+  }
+
+  static PreEditFilterText(primaryPage) {
+    OfflineUtil.removePage("ModalPrimary");
+    OfflineUtil.setPropertyValue("ModalPrimary", "Value", "");
+    OfflineEmbed_ReportFilter.PreEditFilter(primaryPage);
+  }
+
+  static PreEditFilterNumber(primaryPage) {
+    OfflineUtil.removePage("ModalPrimary");
+    OfflineUtil.setPropertyValue("ModalPrimary", "Value", "");
+    OfflineEmbed_ReportFilter.PreEditFilter(primaryPage);
+  }
+
+  static generateTransforms() {
+    let dataTransforms = {
+      setcomparisontype: this.SetComparisonType,
+      setvaluelabel: this.SetValueLabel,
+      setrelativevalue: this.SetRelativeValue,
+      posteditfilter: this.PostEditFilter,
+      posteditfilterboolean: this.PostEditFilterBoolean,
+      posteditfilterdate: this.PostEditFilterDate,
+      posteditfilterdatetime: this.PostEditFilterDateTime,
+      posteditfiltertext: this.PostEditFilterText,
+      posteditfilternumber: this.PostEditFilterNumber,
+      preeditfilter: this.PreEditFilter,
+      preeditfilterboolean: this.PreEditFilterBoolean,
+      preeditfilterdate: this.PreEditFilterDate,
+      preeditfilterdatetime: this.PreEditFilterDateTime,
+      preeditfiltertext: this.PreEditFilterText,
+      preeditfilternumber: this.PreEditFilterNumber,
+    };
+    let baseClassName = "gcss_discops_embed_reportfilter";
+    OfflineUtil.generateTransforms(this, dataTransforms, baseClassName);
+  }
+};
+//static-content-hash-trigger-GCC
 
 HarnessUtil = new OfflineUtilType("HarnessUtil");
 OfflineUtil = new OfflineUtilType("HarnessUtil");
